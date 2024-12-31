@@ -21,6 +21,10 @@ contract BcgVestingHandler is Test {
     address public admin;
     address public stakeController;
 
+    // We track which address staked each token, so we can verify the VestingPeriod.owner
+    // does not change mid-staking.
+    mapping(uint16 => address) internal stakerRegistry;
+
     // Sample data for testing
     // Since the contract has uniform behavior for all tokens, we can use a subset of token IDs
     uint16 public startingTokenId;
@@ -72,6 +76,9 @@ contract BcgVestingHandler is Test {
             vm.startPrank(stakeController);
             bcgVesting.onTokenStaked(address(this), tokenId);
             vm.stopPrank();
+
+            // Record the staker address once for this staking period
+            stakerRegistry[tokenId] = address(this);
         }
     }
 
@@ -91,6 +98,9 @@ contract BcgVestingHandler is Test {
             vm.startPrank(stakeController);
             bcgVesting.onTokenUnstaked(address(this), tokenId);
             vm.stopPrank();
+
+            // Reset the staker record once it's unstaked
+            stakerRegistry[tokenId] = address(0);
         }
     }
 
@@ -158,6 +168,21 @@ contract BcgVestingHandler is Test {
                 allZero != allNonZero,
                 "Invariant violation: VestingPeriod values must be all zero or all non-zero"
             );
+        }
+    }
+
+    function checkSingleStakerOwnerInvariant() public view {
+        for (uint16 id = startingTokenId; id < startingTokenId + subsetSize; id++) {
+            // Read the vesting data for this token
+            (, , BcgVesting.VestingPeriod memory vesting) = bcgVesting.vestingState(id);
+
+            // If the token is staked (owner != address(0)), then check the recorded staker
+            if (vesting.owner != address(0)) {
+                require(
+                    vesting.owner == stakerRegistry[id],
+                    "Invariant violation: staker changed mid-staking!"
+                );
+            }
         }
     }
 

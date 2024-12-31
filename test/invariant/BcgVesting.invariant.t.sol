@@ -45,6 +45,10 @@ contract BcgVestingInvariantTest is Test {
         handler.checkVestingPeriodValuesInvariant();
     }
 
+    function invariant_singleStakerOwner() public view {
+        handler.checkSingleStakerOwnerInvariant();
+    }
+
     function invariant_initialUnlockCollected() public view {
         handler.checkInitialUnlockInvariant();
     }
