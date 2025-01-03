@@ -62,11 +62,8 @@ contract BcgVesting is AccessControl, BcgTokenStakeListener {
         (BCG_TOKEN_COUNT - UNIQUE_BERA_COUNT) +
             ((UNIQUE_BERA_COUNT * UNIQUE_BERA_ALLOC_RATIO));
 
-    // Solidity's constant evaluation rejects fractional literals, so the result
-    // of this multiplication is lossless.
-    // This was reverse-engineered from the constants and picked to not introduce
-    // any rounding errors; the value is verified at runtime below.
-    uint256 public constant BASE_BERA_DAILY_UNLOCK = 33.68382475 * (10 ** 18);
+    // Full 34 BERAMO tokens unlocked per day per bera
+    uint256 public constant BASE_BERA_DAILY_UNLOCK = 34e18;
     // The total amount of tokens allocated for the linear vesting pool,
     // not accounting for the initial unlock.
     uint256 public constant LINEAR_UNLOCK_TOTAL =
@@ -80,11 +77,11 @@ contract BcgVesting is AccessControl, BcgTokenStakeListener {
         INITIAL_UNLOCK_TOTAL / BASE_BERA_ALLOC_UNITS;
 
     // The expected total amount of tokens allocated to the users.
-    // This should amount to roughly 15% of the initial token supply (of 1 billion)
+    // This should amount to roughly 15.14% of the initial token supply (of 1 billion)
     // (verified at runtime below)
-    uint256 public constant VESTING_POOL_TOTAL = 149999999964906000000000000;
+    uint256 public constant VESTING_POOL_TOTAL = 151407984000000000000000000;
 
-    // Address of the $BERAMO token
+    // Address of the $BERAMO token (18 decimals)
     IERC20 public immutable _beramoToken;
 
     // Whether the funds have been transferred to the contract
@@ -129,7 +126,7 @@ contract BcgVesting is AccessControl, BcgTokenStakeListener {
 
     constructor(IERC20 beramoToken, address stakeController) {
         // We can't verify this reliably at compile-time, so make sure the total
-        // rewards pool size roughly corresponds to the 15% of the initial supply
+        // rewards pool size roughly corresponds to the 15.14% of the initial supply
         // of 1 billion, using the constants defined above.
         require(
             INITIAL_UNLOCK_TOTAL + LINEAR_UNLOCK_TOTAL == VESTING_POOL_TOTAL,
@@ -137,7 +134,7 @@ contract BcgVesting is AccessControl, BcgTokenStakeListener {
         );
         // Sanity check that the picked daily rewards value is correct
         require(
-            LINEAR_UNLOCK_TOTAL == 74999999982453000000000000,
+            LINEAR_UNLOCK_TOTAL == 75703992000000000000000000,
             VestingPoolInvalidSize()
         );
 
