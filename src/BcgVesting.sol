@@ -29,7 +29,7 @@ function isUnique(uint256 tokenId) pure returns (bool) {
         tokenId == 5546); // Zelemor
 }
 
-interface BcgTokenStakeListener {
+interface IBcgTokenStakeListener {
     function onTokenStaked(address staker, uint256 tokenId) external;
 
     function onTokenUnstaked(address staker, uint256 tokenId) external;
@@ -50,7 +50,7 @@ interface BcgTokenStakeListener {
  * - Preventing lastCollectionTimestamp from decreasing during reward collection.
  * - Calculating daysCollected based on the exact timestamp difference.
  */
-contract BcgVesting is AccessControl, BcgTokenStakeListener {
+contract BcgVesting is AccessControl, IBcgTokenStakeListener {
     bytes32 public constant STAKER_ROLE = keccak256("STAKER_ROLE");
 
     // A linear vesting schedule, unlocked daily...
@@ -133,6 +133,9 @@ contract BcgVesting is AccessControl, BcgTokenStakeListener {
     mapping(uint16 => TokenVestingState) public vestingState;
 
     constructor(IERC20 beramoToken, address stakeController) {
+        require(address(beramoToken) != address(0), InputAddressIsZero());
+        require(stakeController != address(0), InputAddressIsZero());
+
         // We can't verify this reliably at compile-time, so make sure the total
         // rewards pool size roughly corresponds to the 15.14% of the initial supply
         // of 1 billion, using the constants defined above.
@@ -161,6 +164,7 @@ contract BcgVesting is AccessControl, BcgTokenStakeListener {
 
         // We transfer at once the total amount of tokens required by the vesting pool
         _beramoToken.safeTransferFrom(msg.sender, address(this), VESTING_POOL_TOTAL);
+        emit VestingPoolInitialized(VESTING_POOL_TOTAL);
 
         vestingPoolInitialized = true;
     }
@@ -170,7 +174,9 @@ contract BcgVesting is AccessControl, BcgTokenStakeListener {
      * This includes the initial unlock (happens on stake) and the linear rewards.
      * @param tokenId BCG token ID to query.
      */
-    function pendingRewards(uint16 tokenId) public view returns (uint256) {
+    function pendingRewards(
+        uint16 tokenId
+    ) public view validateBcgTokenId(tokenId) returns (uint256) {
         uint256 rewards = 0;
 
         // Account for the initial unlock if it hasn't been collected yet
@@ -227,6 +233,10 @@ contract BcgVesting is AccessControl, BcgTokenStakeListener {
         address staker,
         uint256 tokenId_
     ) external onlyRole(STAKER_ROLE) validateBcgTokenId(tokenId_) {
+        // NOTE: This requires the vesting pool to be initialized; otherwise
+        // we revert on the initial unlock transfer below.
+        require(staker != address(0), InputAddressIsZero());
+
         // Truncation: validated to be in range by the modifier
         uint16 tokenId = uint16(tokenId_);
         TokenVestingState memory data = vestingState[tokenId];
@@ -241,10 +251,9 @@ contract BcgVesting is AccessControl, BcgTokenStakeListener {
 
             // Safety: The token address is immutable and picked by the creator,
             // so no risk of reentrancy.
-            _beramoToken.safeTransfer(
-                staker,
-                BASE_BERA_INITIAL_UNLOCK * _allocationMultiplier(tokenId)
-            );
+            uint256 amount = BASE_BERA_INITIAL_UNLOCK * _allocationMultiplier(tokenId);
+            _beramoToken.safeTransfer(staker, amount);
+            emit RewardCollected(staker, tokenId, amount);
         }
 
         // Nothing to unlock anymore, don't bother writing to storage
@@ -271,12 +280,19 @@ contract BcgVesting is AccessControl, BcgTokenStakeListener {
      * @param tokenId_ The ID of the token being unstaked.
      */
     function onTokenUnstaked(
-        address /* staker */,
+        address staker_,
         uint256 tokenId_
     ) external onlyRole(STAKER_ROLE) validateBcgTokenId(tokenId_) {
         // Truncation: validated to be in range by the modifier
         uint16 tokenId = uint16(tokenId_);
         TokenVestingState memory data = vestingState[tokenId];
+
+        require(
+            data.vesting.owner == staker_,
+            MismatchedStaker(staker_, data.vesting.owner)
+        );
+        require(data.vesting.startTimestamp != 0, TokenNotStaked(tokenId));
+        require(data.vesting.lastCollectionTimestamp != 0, TokenNotStaked(tokenId));
 
         // Nothing to unlock anymore, don't bother writing to storage
         if (data.daysCollected >= VESTING_PERIOD_IN_DAYS) {
@@ -308,7 +324,10 @@ contract BcgVesting is AccessControl, BcgTokenStakeListener {
         TokenVestingState memory data = vestingState[tokenId];
 
         // Only the owner of the staked token or the staker can collect the rewards
-        require(msg.sender == data.vesting.owner || hasRole(STAKER_ROLE, msg.sender));
+        require(
+            msg.sender == data.vesting.owner || hasRole(STAKER_ROLE, msg.sender),
+            UnauthorizedCollector(data.vesting.owner, msg.sender)
+        );
 
         (uint256 fullDays, uint256 linearRewards) = _pendingLinearRewards(tokenId);
         if (linearRewards > 0) {
@@ -322,6 +341,7 @@ contract BcgVesting is AccessControl, BcgTokenStakeListener {
             // Safety: The token address is immutable and picked by the creator,
             // so no risk of reentrancy.
             _beramoToken.safeTransfer(data.vesting.owner, linearRewards);
+            emit RewardCollected(data.vesting.owner, tokenId, linearRewards);
         }
     }
 
@@ -332,16 +352,19 @@ contract BcgVesting is AccessControl, BcgTokenStakeListener {
      * be warm and so the savings would be miniscule.
      */
     function collectPendingRewardsBatch(uint16[] calldata tokenIds) public {
-        uint16 tokenId;
         for (uint256 i = 0; i < tokenIds.length; i++) {
-            tokenId = tokenIds[i];
-            require(tokenId < BCG_TOKEN_COUNT, InvalidTokenId(tokenId));
-
-            collectPendingRewards(tokenId);
+            collectPendingRewards(tokenIds[i]);
         }
     }
 
+    event VestingPoolInitialized(uint256 amount);
+    event RewardCollected(address indexed owner, uint16 indexed tokenId, uint256 amount);
+
+    error InputAddressIsZero();
+    error UnauthorizedCollector(address owner, address caller);
+    error MismatchedStaker(address expected, address actual);
     error TokenAlreadyStaked(uint16 tokenId);
+    error TokenNotStaked(uint16 tokenId);
     error InvalidTokenId(uint256 tokenId);
     error VestingPoolAlreadyInitialized();
     error VestingPoolNotInitialized();
