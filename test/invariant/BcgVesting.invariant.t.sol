@@ -33,6 +33,14 @@ contract BcgVestingInvariantTest is Test {
         handler.checkLastCollectionTimestampInvariant();
     }
 
+    function invariant_lastCollectionTimestampWeaklyIncreasing() public view {
+        handler.checkLastCollectionTimestampWeaklyIncreasingInvariant();
+    }
+
+    function invariant_daysCollectedIncrement() public view {
+        handler.checkDaysCollectedIncrementInvariant();
+    }
+
     // We need deep runs to verify if the `daysCollected` correctly saturates
     // at the maximum number of days in the vesting period.
     /// forge-config: default.invariant.runs = 20

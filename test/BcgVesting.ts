@@ -249,6 +249,36 @@ describe("BcgVesting", function () {
     expect(initialUnlockCollected).to.be.true;
   });
 
+  it("Should maintain daysCollected consistent with timestamps", async function () {
+    const { staker, bcgVesting } = await loadFixture(deployContractsFixture);
+
+    const tokenId = 100;
+    await bcgVesting.connect(staker).onTokenStaked(staker.address, tokenId);
+
+    // First collection after 2 days
+    await time.increase(2 * DAYS_IN_SECONDS);
+    await bcgVesting.connect(staker).collectPendingRewards(tokenId);
+
+    // Second collection after 1 more day
+    await time.increase(1 * DAYS_IN_SECONDS);
+    await bcgVesting.connect(staker).collectPendingRewards(tokenId);
+
+    // Third collection after 1 more day
+    await time.increase(1 * DAYS_IN_SECONDS);
+    await bcgVesting.connect(staker).collectPendingRewards(tokenId);
+
+    // Verify that daysCollected exactly matches the days between timestamps
+    const state = await bcgVesting.vestingState(tokenId);
+    const daysCollected = Number(state[0]);
+    const startTimestamp = Number(state[2].startTimestamp);
+    const lastCollectionTimestamp = Number(state[2].lastCollectionTimestamp);
+
+    expect(daysCollected).to.equal(
+      Math.floor((lastCollectionTimestamp - startTimestamp) / DAYS_IN_SECONDS),
+      "daysCollected must exactly match days between lastCollectionTimestamp and startTimestamp"
+    );
+  });
+
   it("Should not grant the initial unlock on subsequent stakes", async function () {
     const { staker, bcgVesting, erc20Token } = await loadFixture(deployContractsFixture);
 

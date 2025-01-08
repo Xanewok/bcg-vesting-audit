@@ -88,6 +88,8 @@ executed using `npx hardhat test` and `forge test -vvv`, respectively.
    - `lastCollectionTimestamp >= startTimestamp` for every staked token
    - Timestamps are updated atomically during stake/unstake operations
    - Collection timestamps only increment by full days
+   - `lastCollectionTimestamp` is weakly increasing for each token
+   - For each active vesting period, `daysCollected` increment always equals `(lastCollectionTimestamp - startTimestamp) / 1 day`
 
 2. **Vesting Period Bounds**
 

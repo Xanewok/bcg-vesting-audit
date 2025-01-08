@@ -39,10 +39,16 @@ interface BcgTokenStakeListener {
  * Invariants:
  * 1. lastCollectionTimestamp >= startTimestamp for every staked token.
  * 2. daysCollected <= VESTING_PERIOD_IN_DAYS always.
+ * 3. For each active vesting period:
+ *    3a. lastCollectionTimestamp is weakly increasing by exact full days.
+ *    3b. daysCollected increment since last vesting period equals exactly
+ *        (lastCollectionTimestamp - startTimestamp) / 1 day
  *
  * The contract ensures these invariants by:
  * - Setting both timestamps at the same moment on stake.
  * - Incrementing daysCollected by exact full days during collections.
+ * - Preventing lastCollectionTimestamp from decreasing during reward collection.
+ * - Calculating daysCollected based on the exact timestamp difference.
  */
 contract BcgVesting is AccessControl, BcgTokenStakeListener {
     bytes32 public constant STAKER_ROLE = keccak256("STAKER_ROLE");
@@ -103,8 +109,10 @@ contract BcgVesting is AccessControl, BcgTokenStakeListener {
     /**
      * Invariants:
      * 1. lastCollectionTimestamp >= startTimestamp for every staked token.
-     * 2. Either all values are zero, or all are non-zero.
+     * 2. Either all values are zero, or all are non-zero (i.e. vesting period is active).
      * 3. Values are zero if and only if the token is not staked.
+     * 4. lastCollectionTimestamp is weakly increasing by exact full days.
+     * 5. During an active vesting period, owner is set exactly once, initially.
      *
      * We maintain these invariants by:
      * - Setting both timestamps at the same moment on stake.
@@ -305,12 +313,10 @@ contract BcgVesting is AccessControl, BcgTokenStakeListener {
         (uint256 fullDays, uint256 linearRewards) = _pendingLinearRewards(tokenId);
         if (linearRewards > 0) {
             vestingState[tokenId].daysCollected += uint16(fullDays);
-
-            // Invariant: lastCollectionTimestamp >= startTimestamp
-            vestingState[tokenId].vesting.lastCollectionTimestamp = uint48(
-                // We use precise day increments from the start, so the
-                // full days calculation will always be accurate
-                data.vesting.startTimestamp + (fullDays * 1 days)
+            // The full days are calculated relative to the lastCollectionTimestamp,
+            // so collecting mid-day will not impact the schedule
+            vestingState[tokenId].vesting.lastCollectionTimestamp += uint48(
+                fullDays * 1 days
             );
 
             // Safety: The token address is immutable and picked by the creator,

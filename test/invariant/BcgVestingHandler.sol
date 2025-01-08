@@ -25,6 +25,11 @@ contract BcgVestingHandler is Test {
     // does not change mid-staking.
     mapping(uint16 => address) internal stakerRegistry;
 
+    // Track daysCollected from previous vesting periods for each token
+    mapping(uint16 => uint256) internal lastDaysCollected;
+    // Track the last collection timestamp for each token to verify it's weakly increasing
+    mapping(uint16 => uint48) internal lastCollectionTimestamps;
+
     // Sample data for testing
     // Since the contract has uniform behavior for all tokens, we can use a subset of token IDs
     uint16 public startingTokenId;
@@ -99,6 +104,10 @@ contract BcgVestingHandler is Test {
             bcgVesting.onTokenUnstaked(address(this), tokenId);
             vm.stopPrank();
 
+            // Save daysCollected before unstaking
+            (uint256 daysCollected, , ) = bcgVesting.vestingState(tokenId);
+            lastDaysCollected[tokenId] = daysCollected;
+
             // Reset the staker record once it's unstaked
             stakerRegistry[tokenId] = address(0);
         }
@@ -111,12 +120,27 @@ contract BcgVestingHandler is Test {
 
         (, , BcgVesting.VestingPeriod memory state) = bcgVesting.vestingState(tokenId);
 
+        // Remember the current lastCollectionTimestamp before collecting
+        uint48 oldTimestamp = state.lastCollectionTimestamp;
+
         // To increase the coverage, randomly try to collect either as the
         // owner or the stake controller (only they can collect rewards)
         address caller = tokenId % 2 == 0 ? state.owner : stakeController;
         vm.startPrank(caller);
         bcgVesting.collectPendingRewards(tokenId);
         vm.stopPrank();
+
+        // Get the new state after collection
+        (, , state) = bcgVesting.vestingState(tokenId);
+
+        // Verify the timestamp is weakly increasing
+        require(
+            state.lastCollectionTimestamp >= oldTimestamp,
+            "lastCollectionTimestamp decreased during collection"
+        );
+
+        // Update our tracking state
+        lastCollectionTimestamps[tokenId] = state.lastCollectionTimestamp;
     }
 
     function timeTravel(uint16 seconds_) public {
@@ -141,6 +165,57 @@ contract BcgVestingHandler is Test {
                 "Invariant violation: lastCollectionTimestamp < startTimestamp"
             );
         }
+    }
+
+    function checkDaysCollectedIncrementInvariant() public view {
+        for (uint16 id = startingTokenId; id < startingTokenId + subsetSize; id++) {
+            (
+                uint256 currentDaysCollected,
+                ,
+                BcgVesting.VestingPeriod memory vesting
+            ) = bcgVesting.vestingState(id);
+
+            // Skip if token is not staked
+            if (vesting.owner == address(0)) {
+                continue;
+            }
+
+            // For active vesting periods, verify that the current daysCollected increment
+            // exactly matches the days elapsed in the current period
+            uint256 daysElapsedInCurrentPeriod = (vesting.lastCollectionTimestamp -
+                vesting.startTimestamp) / 1 days;
+            require(
+                currentDaysCollected ==
+                    lastDaysCollected[id] + daysElapsedInCurrentPeriod,
+                "Invariant violation: daysCollected increment does not match timestamp difference"
+            );
+        }
+    }
+
+    function checkLastCollectionTimestampWeaklyIncreasingInvariant() public view {
+        for (uint16 id = startingTokenId; id < startingTokenId + subsetSize; id++) {
+            (, , BcgVesting.VestingPeriod memory vesting) = bcgVesting.vestingState(id);
+
+            // Skip if token is not staked (all values should be 0)
+            if (vesting.owner == address(0)) {
+                continue;
+            }
+
+            // Verify current lastCollectionTimestamp is >= our last recorded timestamp
+            if (lastCollectionTimestamps[id] != 0) {
+                require(
+                    vesting.lastCollectionTimestamp >= lastCollectionTimestamps[id],
+                    "Invariant violation: lastCollectionTimestamp decreased since last collection"
+                );
+            }
+        }
+    }
+
+    function _fullDaysElapsed(
+        uint256 start,
+        uint256 end
+    ) internal pure returns (uint256) {
+        return (end - start) / 1 days;
     }
 
     function checkDaysCollectedInvariant() public view {
