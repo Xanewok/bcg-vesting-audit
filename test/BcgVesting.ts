@@ -254,6 +254,8 @@ describe("BcgVesting", function () {
 
     const tokenId = 100;
     await bcgVesting.connect(staker).onTokenStaked(staker.address, tokenId);
+    const initialState = await bcgVesting.vestingState(tokenId);
+    const startTimestamp = initialState.vesting.lastCollectionTimestamp;
 
     // First collection after 2 days
     await time.increase(2 * DAYS_IN_SECONDS);
@@ -270,11 +272,10 @@ describe("BcgVesting", function () {
     // Verify that daysCollected exactly matches the days between timestamps
     const state = await bcgVesting.vestingState(tokenId);
     const daysCollected = Number(state[0]);
-    const startTimestamp = Number(state[2].startTimestamp);
-    const lastCollectionTimestamp = Number(state[2].lastCollectionTimestamp);
+    const lastCollectionTimestamp = state[2].lastCollectionTimestamp;
 
     expect(daysCollected).to.equal(
-      Math.floor((lastCollectionTimestamp - startTimestamp) / DAYS_IN_SECONDS),
+      Math.floor(Number(lastCollectionTimestamp - startTimestamp) / DAYS_IN_SECONDS),
       "daysCollected must exactly match days between lastCollectionTimestamp and startTimestamp"
     );
   });

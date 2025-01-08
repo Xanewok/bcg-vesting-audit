@@ -37,15 +37,13 @@ interface IBcgTokenStakeListener {
 
 /**
  * Invariants:
- * 1. lastCollectionTimestamp >= startTimestamp for every staked token.
- * 2. daysCollected <= VESTING_PERIOD_IN_DAYS always.
- * 3. For each active vesting period:
- *    3a. lastCollectionTimestamp is weakly increasing by exact full days.
- *    3b. daysCollected increment since last vesting period equals exactly
- *        (lastCollectionTimestamp - startTimestamp) / 1 day
+ * 1. daysCollected <= VESTING_PERIOD_IN_DAYS always.
+ * 2. For each active vesting period:
+ *    2a. lastCollectionTimestamp is weakly increasing by exact full days.
+ *    2b. daysCollected increment since last vesting period equals exactly
+ *        (lastCollectionTimestamp - initial lastCollectionTimestamp) / 1 day
  *
  * The contract ensures these invariants by:
- * - Setting both timestamps at the same moment on stake.
  * - Incrementing daysCollected by exact full days during collections.
  * - Preventing lastCollectionTimestamp from decreasing during reward collection.
  * - Calculating daysCollected based on the exact timestamp difference.
@@ -108,14 +106,12 @@ contract BcgVesting is AccessControl, IBcgTokenStakeListener {
 
     /**
      * Invariants:
-     * 1. lastCollectionTimestamp >= startTimestamp for every staked token.
-     * 2. Either all values are zero, or all are non-zero (i.e. vesting period is active).
-     * 3. Values are zero if and only if the token is not staked.
-     * 4. lastCollectionTimestamp is weakly increasing by exact full days.
-     * 5. During an active vesting period, owner is set exactly once, initially.
+     * 1. Either all values are zero, or all are non-zero (i.e. vesting period is active).
+     * 2. Values are zero if and only if the token is not staked.
+     * 3. lastCollectionTimestamp is weakly increasing by exact full days.
+     * 4. During an active vesting period, owner is set exactly once, initially.
      *
      * We maintain these invariants by:
-     * - Setting both timestamps at the same moment on stake.
      * - Only ever incrementing lastCollectionTimestamp by full days.
      * - Resetting the vesting schedule on unstake.
      *
@@ -126,7 +122,7 @@ contract BcgVesting is AccessControl, IBcgTokenStakeListener {
     struct VestingPeriod {
         // The owner of the token who initiated the given vesting period
         address owner;
-        uint48 startTimestamp;
+        // The last time the rewards were collected or the time it was staked
         uint48 lastCollectionTimestamp;
     }
     // Token-based vesting schedules
@@ -242,7 +238,6 @@ contract BcgVesting is AccessControl, IBcgTokenStakeListener {
         TokenVestingState memory data = vestingState[tokenId];
 
         require(data.vesting.owner == address(0), TokenAlreadyStaked(tokenId));
-        require(data.vesting.startTimestamp == 0, TokenAlreadyStaked(tokenId));
         require(data.vesting.lastCollectionTimestamp == 0, TokenAlreadyStaked(tokenId));
 
         // Collect the initial unlock immediately, if applicable
@@ -268,8 +263,6 @@ contract BcgVesting is AccessControl, IBcgTokenStakeListener {
 
         vestingState[tokenId].vesting = VestingPeriod({
             owner: staker,
-            startTimestamp: _now,
-            // Invariant: lastCollectionTimestamp >= startTimestamp
             lastCollectionTimestamp: _now
         });
     }
@@ -291,7 +284,6 @@ contract BcgVesting is AccessControl, IBcgTokenStakeListener {
             data.vesting.owner == staker_,
             MismatchedStaker(staker_, data.vesting.owner)
         );
-        require(data.vesting.startTimestamp != 0, TokenNotStaked(tokenId));
         require(data.vesting.lastCollectionTimestamp != 0, TokenNotStaked(tokenId));
 
         // Nothing to unlock anymore, don't bother writing to storage
@@ -305,7 +297,6 @@ contract BcgVesting is AccessControl, IBcgTokenStakeListener {
         // Reset the vesting schedule
         vestingState[tokenId].vesting = VestingPeriod({
             owner: address(0),
-            startTimestamp: 0,
             lastCollectionTimestamp: 0
         });
     }
@@ -382,7 +373,7 @@ contract BcgVesting is AccessControl, IBcgTokenStakeListener {
         }
 
         // Not staking, so no rewards to collect
-        if (data.vesting.startTimestamp == 0) {
+        if (data.vesting.lastCollectionTimestamp == 0) {
             return (0, 0);
         }
 

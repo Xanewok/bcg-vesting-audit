@@ -29,10 +29,6 @@ contract BcgVestingInvariantTest is Test {
         targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
     }
 
-    function invariant_lastCollectionTimestamp() public view {
-        handler.checkLastCollectionTimestampInvariant();
-    }
-
     function invariant_lastCollectionTimestampWeaklyIncreasing() public view {
         handler.checkLastCollectionTimestampWeaklyIncreasingInvariant();
     }

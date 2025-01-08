@@ -29,6 +29,8 @@ contract BcgVestingHandler is Test {
     mapping(uint16 => uint256) internal lastDaysCollected;
     // Track the last collection timestamp for each token to verify it's weakly increasing
     mapping(uint16 => uint48) internal lastCollectionTimestamps;
+    // Track the initial lastCollectionTimestamp when token was staked (to maintain old invariant)
+    mapping(uint16 => uint48) internal startTimestamps;
 
     // Sample data for testing
     // Since the contract has uniform behavior for all tokens, we can use a subset of token IDs
@@ -84,6 +86,12 @@ contract BcgVestingHandler is Test {
 
             // Record the staker address once for this staking period
             stakerRegistry[tokenId] = address(this);
+
+            // Record the initial lastCollectionTimestamp for this staking period
+            (, , BcgVesting.VestingPeriod memory vesting) = bcgVesting.vestingState(
+                tokenId
+            );
+            startTimestamps[tokenId] = vesting.lastCollectionTimestamp;
         }
     }
 
@@ -156,17 +164,6 @@ contract BcgVestingHandler is Test {
     }
 
     // Invariant helpers
-    function checkLastCollectionTimestampInvariant() public view {
-        for (uint16 id = startingTokenId; id < startingTokenId + subsetSize; id++) {
-            (, , BcgVesting.VestingPeriod memory vesting) = bcgVesting.vestingState(id);
-
-            require(
-                vesting.lastCollectionTimestamp >= vesting.startTimestamp,
-                "Invariant violation: lastCollectionTimestamp < startTimestamp"
-            );
-        }
-    }
-
     function checkDaysCollectedIncrementInvariant() public view {
         for (uint16 id = startingTokenId; id < startingTokenId + subsetSize; id++) {
             (
@@ -183,7 +180,7 @@ contract BcgVestingHandler is Test {
             // For active vesting periods, verify that the current daysCollected increment
             // exactly matches the days elapsed in the current period
             uint256 daysElapsedInCurrentPeriod = (vesting.lastCollectionTimestamp -
-                vesting.startTimestamp) / 1 days;
+                startTimestamps[id]) / 1 days;
             require(
                 currentDaysCollected ==
                     lastDaysCollected[id] + daysElapsedInCurrentPeriod,
@@ -234,10 +231,8 @@ contract BcgVestingHandler is Test {
             (, , BcgVesting.VestingPeriod memory vesting) = bcgVesting.vestingState(id);
 
             bool allZero = vesting.owner == address(0) &&
-                vesting.startTimestamp == 0 &&
                 vesting.lastCollectionTimestamp == 0;
             bool allNonZero = vesting.owner != address(0) &&
-                vesting.startTimestamp != 0 &&
                 vesting.lastCollectionTimestamp != 0;
             require(
                 allZero != allNonZero,
@@ -273,7 +268,6 @@ contract BcgVestingHandler is Test {
                 // If no initial unlock has been collected, token must never have been staked
                 require(
                     vesting.owner == address(0) &&
-                        vesting.startTimestamp == 0 &&
                         vesting.lastCollectionTimestamp == 0 &&
                         daysCollected == 0,
                     "Invariant violation: No initial unlock collected, but token shows vesting activity"
@@ -295,11 +289,7 @@ contract BcgVestingHandler is Test {
 
         // If the token has never been staked, these conditions should hold true
         vm.assume(!initialUnlockCollected);
-        vm.assume(
-            vesting.owner == address(0) &&
-                vesting.startTimestamp == 0 &&
-                vesting.lastCollectionTimestamp == 0
-        );
+        vm.assume(vesting.owner == address(0) && vesting.lastCollectionTimestamp == 0);
         vm.assume(daysCollected == 0);
 
         uint256 stakerBalanceBefore = beramoToken.balanceOf(staker);
