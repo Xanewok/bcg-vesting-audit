@@ -35,19 +35,6 @@ interface IBcgTokenStakeListener {
     function onTokenUnstaked(address staker, uint256 tokenId) external;
 }
 
-/**
- * Invariants:
- * 1. daysCollected <= VESTING_PERIOD_IN_DAYS always.
- * 2. For each active vesting period:
- *    2a. lastCollectionTimestamp is weakly increasing by exact full days.
- *    2b. daysCollected increment since last vesting period equals exactly
- *        (lastCollectionTimestamp - initial lastCollectionTimestamp) / 1 day
- *
- * The contract ensures these invariants by:
- * - Incrementing daysCollected by exact full days during collections.
- * - Preventing lastCollectionTimestamp from decreasing during reward collection.
- * - Calculating daysCollected based on the exact timestamp difference.
- */
 contract BcgVesting is AccessControl, IBcgTokenStakeListener {
     bytes32 public constant STAKER_ROLE = keccak256("STAKER_ROLE");
 
@@ -91,40 +78,35 @@ contract BcgVesting is AccessControl, IBcgTokenStakeListener {
     // Whether the funds have been transferred to the contract
     bool vestingPoolInitialized;
 
-    /**
-     * Invariant: daysCollected <= VESTING_PERIOD_IN_DAYS (364) always.
-     * We only ever increment daysCollected by exact full days of pending rewards
-     * (which can never exceed the vesting period), so this invariant is maintained.
-     * Invariant: initialUnlockCollected is set to true iff the initial unlock
-     * has been collected, which happens immediately during the first stake.
-     */
+    /** Keeps track of the rewards given and active vesting period (if any) for a token. */
     struct TokenVestingState {
+        // ---- Persistent state ----
+        // These track the state of the total rewards given for the token
+        // for the entire lifetime of the vesting pool.
+        //
+        // Invariants:
+        // 1. daysCollected <= VESTING_PERIOD_IN_DAYS (364).
+        // 2. initialUnlockCollected is permanently set to true iff the initial
+        //    unlock has been collected, which happens immediately during the first stake.
         uint16 daysCollected;
         bool initialUnlockCollected;
-        VestingPeriod vesting;
-    }
-
-    /**
-     * Invariants:
-     * 1. Either all values are zero, or all are non-zero (i.e. vesting period is active).
-     * 2. Values are zero if and only if the token is not staked.
-     * 3. lastCollectionTimestamp is weakly increasing by exact full days.
-     * 4. During an active vesting period, owner is set exactly once, initially.
-     *
-     * We maintain these invariants by:
-     * - Only ever incrementing lastCollectionTimestamp by full days.
-     * - Resetting the vesting schedule on unstake.
-     *
-     * Notes:
-     * - We use 48-bit timestamps, which are sufficient for million+ years.
-     * - This is done to pack the struct into a single slot.
-     */
-    struct VestingPeriod {
-        // The owner of the token who initiated the given vesting period
+        // ---- Transient vesting period state ----
+        // These track the transient state of a vesting period for a user staking a token.
+        //
+        // This is inlined to pack into a single storage slot.
+        //
+        // Invariants:
+        // 1. Either all values are zero (i.e. vesting period is inactive), or all are non-zero.
+        // 2. The owner is set exactly once for each active vesting period.
+        // 3. The vesting period can only be active if there are still rewards to be collected.
+        // 4. lastCollectionTimestamp is weakly increasing by exact full days.
+        // 5. daysCollected increment since last active vesting period equals exactly
+        //    (lastCollectionTimestamp - initial lastCollectionTimestamp) / 1 day
         address owner;
-        // The last time the rewards were collected or the time it was staked
+        // The last time the rewards were collected or the time the token was staked.
         uint48 lastCollectionTimestamp;
     }
+
     // Token-based vesting schedules
     mapping(uint16 => TokenVestingState) public vestingState;
 
@@ -237,8 +219,8 @@ contract BcgVesting is AccessControl, IBcgTokenStakeListener {
         uint16 tokenId = uint16(tokenId_);
         TokenVestingState memory data = vestingState[tokenId];
 
-        require(data.vesting.owner == address(0), TokenAlreadyStaked(tokenId));
-        require(data.vesting.lastCollectionTimestamp == 0, TokenAlreadyStaked(tokenId));
+        require(data.owner == address(0), TokenAlreadyStaked(tokenId));
+        require(data.lastCollectionTimestamp == 0, TokenAlreadyStaked(tokenId));
 
         // Collect the initial unlock immediately, if applicable
         if (data.initialUnlockCollected == false) {
@@ -261,10 +243,8 @@ contract BcgVesting is AccessControl, IBcgTokenStakeListener {
         // Truncation: 48-bit timestamp is million years away
         uint48 _now = uint48(block.timestamp);
 
-        vestingState[tokenId].vesting = VestingPeriod({
-            owner: staker,
-            lastCollectionTimestamp: _now
-        });
+        vestingState[tokenId].owner = staker;
+        vestingState[tokenId].lastCollectionTimestamp = _now;
     }
 
     /**
@@ -280,11 +260,8 @@ contract BcgVesting is AccessControl, IBcgTokenStakeListener {
         uint16 tokenId = uint16(tokenId_);
         TokenVestingState memory data = vestingState[tokenId];
 
-        require(
-            data.vesting.owner == staker_,
-            MismatchedStaker(staker_, data.vesting.owner)
-        );
-        require(data.vesting.lastCollectionTimestamp != 0, TokenNotStaked(tokenId));
+        require(data.owner == staker_, MismatchedStaker(staker_, data.owner));
+        require(data.lastCollectionTimestamp != 0, TokenNotStaked(tokenId));
 
         // Nothing to unlock anymore, don't bother writing to storage
         if (data.daysCollected >= VESTING_PERIOD_IN_DAYS) {
@@ -295,10 +272,8 @@ contract BcgVesting is AccessControl, IBcgTokenStakeListener {
         collectPendingRewards(tokenId);
 
         // Reset the vesting schedule
-        vestingState[tokenId].vesting = VestingPeriod({
-            owner: address(0),
-            lastCollectionTimestamp: 0
-        });
+        vestingState[tokenId].owner = address(0);
+        vestingState[tokenId].lastCollectionTimestamp = 0;
     }
 
     /**
@@ -316,8 +291,8 @@ contract BcgVesting is AccessControl, IBcgTokenStakeListener {
 
         // Only the owner of the staked token or the staker can collect the rewards
         require(
-            msg.sender == data.vesting.owner || hasRole(STAKER_ROLE, msg.sender),
-            UnauthorizedCollector(data.vesting.owner, msg.sender)
+            msg.sender == data.owner || hasRole(STAKER_ROLE, msg.sender),
+            UnauthorizedCollector(data.owner, msg.sender)
         );
 
         (uint256 fullDays, uint256 linearRewards) = _pendingLinearRewards(tokenId);
@@ -325,14 +300,12 @@ contract BcgVesting is AccessControl, IBcgTokenStakeListener {
             vestingState[tokenId].daysCollected += uint16(fullDays);
             // The full days are calculated relative to the lastCollectionTimestamp,
             // so collecting mid-day will not impact the schedule
-            vestingState[tokenId].vesting.lastCollectionTimestamp += uint48(
-                fullDays * 1 days
-            );
+            vestingState[tokenId].lastCollectionTimestamp += uint48(fullDays * 1 days);
 
             // Safety: The token address is immutable and picked by the creator,
             // so no risk of reentrancy.
-            _beramoToken.safeTransfer(data.vesting.owner, linearRewards);
-            emit RewardCollected(data.vesting.owner, tokenId, linearRewards);
+            _beramoToken.safeTransfer(data.owner, linearRewards);
+            emit RewardCollected(data.owner, tokenId, linearRewards);
         }
     }
 
@@ -373,7 +346,7 @@ contract BcgVesting is AccessControl, IBcgTokenStakeListener {
         }
 
         // Not staking, so no rewards to collect
-        if (data.vesting.lastCollectionTimestamp == 0) {
+        if (data.lastCollectionTimestamp == 0) {
             return (0, 0);
         }
 
@@ -384,7 +357,7 @@ contract BcgVesting is AccessControl, IBcgTokenStakeListener {
         // Truncation: 48-bit timestamp is million years away
         uint48 _now = uint48(block.timestamp);
 
-        fullDays = _fullDaysElapsed(data.vesting.lastCollectionTimestamp, _now);
+        fullDays = _fullDaysElapsed(data.lastCollectionTimestamp, _now);
         if (fullDays > 0) {
             // Ensure we never go beyond the vesting period (364 days)
             fullDays = (data.daysCollected + fullDays) > VESTING_PERIOD_IN_DAYS

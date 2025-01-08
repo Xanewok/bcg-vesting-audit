@@ -69,9 +69,9 @@ contract BcgVestingHandler is Test {
     }
 
     function _isStaked(uint16 tokenId) internal view returns (bool) {
-        (, , BcgVesting.VestingPeriod memory v) = bcgVesting.vestingState(tokenId);
+        (, , address owner, ) = bcgVesting.vestingState(tokenId);
         // If owner is non-zero, it's staked
-        return v.owner != address(0);
+        return owner != address(0);
     }
 
     function stake(uint16 tokenId) public {
@@ -88,10 +88,8 @@ contract BcgVestingHandler is Test {
             stakerRegistry[tokenId] = address(this);
 
             // Record the initial lastCollectionTimestamp for this staking period
-            (, , BcgVesting.VestingPeriod memory vesting) = bcgVesting.vestingState(
-                tokenId
-            );
-            startTimestamps[tokenId] = vesting.lastCollectionTimestamp;
+            (, , , uint48 lastCollectionTimestamp) = bcgVesting.vestingState(tokenId);
+            startTimestamps[tokenId] = lastCollectionTimestamp;
         }
     }
 
@@ -113,7 +111,7 @@ contract BcgVestingHandler is Test {
             vm.stopPrank();
 
             // Save daysCollected before unstaking
-            (uint256 daysCollected, , ) = bcgVesting.vestingState(tokenId);
+            (uint256 daysCollected, , , ) = bcgVesting.vestingState(tokenId);
             lastDaysCollected[tokenId] = daysCollected;
 
             // Reset the staker record once it's unstaked
@@ -126,29 +124,28 @@ contract BcgVestingHandler is Test {
             bound(tokenId, startingTokenId, startingTokenId + subsetSize - 1)
         );
 
-        (, , BcgVesting.VestingPeriod memory state) = bcgVesting.vestingState(tokenId);
-
-        // Remember the current lastCollectionTimestamp before collecting
-        uint48 oldTimestamp = state.lastCollectionTimestamp;
+        (, , address owner, uint48 oldCollectionTimestamp) = bcgVesting.vestingState(
+            tokenId
+        );
 
         // To increase the coverage, randomly try to collect either as the
         // owner or the stake controller (only they can collect rewards)
-        address caller = tokenId % 2 == 0 ? state.owner : stakeController;
+        address caller = tokenId % 2 == 0 ? owner : stakeController;
         vm.startPrank(caller);
         bcgVesting.collectPendingRewards(tokenId);
         vm.stopPrank();
 
         // Get the new state after collection
-        (, , state) = bcgVesting.vestingState(tokenId);
+        (, , , uint48 lastCollectionTimestamp) = bcgVesting.vestingState(tokenId);
 
         // Verify the timestamp is weakly increasing
         require(
-            state.lastCollectionTimestamp >= oldTimestamp,
+            lastCollectionTimestamp >= oldCollectionTimestamp,
             "lastCollectionTimestamp decreased during collection"
         );
 
         // Update our tracking state
-        lastCollectionTimestamps[tokenId] = state.lastCollectionTimestamp;
+        lastCollectionTimestamps[tokenId] = lastCollectionTimestamp;
     }
 
     function timeTravel(uint16 seconds_) public {
@@ -169,17 +166,18 @@ contract BcgVestingHandler is Test {
             (
                 uint256 currentDaysCollected,
                 ,
-                BcgVesting.VestingPeriod memory vesting
+                address owner,
+                uint48 lastCollectionTimestamp
             ) = bcgVesting.vestingState(id);
 
             // Skip if token is not staked
-            if (vesting.owner == address(0)) {
+            if (owner == address(0)) {
                 continue;
             }
 
             // For active vesting periods, verify that the current daysCollected increment
             // exactly matches the days elapsed in the current period
-            uint256 daysElapsedInCurrentPeriod = (vesting.lastCollectionTimestamp -
+            uint256 daysElapsedInCurrentPeriod = (lastCollectionTimestamp -
                 startTimestamps[id]) / 1 days;
             require(
                 currentDaysCollected ==
@@ -191,17 +189,19 @@ contract BcgVestingHandler is Test {
 
     function checkLastCollectionTimestampWeaklyIncreasingInvariant() public view {
         for (uint16 id = startingTokenId; id < startingTokenId + subsetSize; id++) {
-            (, , BcgVesting.VestingPeriod memory vesting) = bcgVesting.vestingState(id);
+            (, , address owner, uint48 lastCollectionTimestamp) = bcgVesting.vestingState(
+                id
+            );
 
             // Skip if token is not staked (all values should be 0)
-            if (vesting.owner == address(0)) {
+            if (owner == address(0)) {
                 continue;
             }
 
             // Verify current lastCollectionTimestamp is >= our last recorded timestamp
             if (lastCollectionTimestamps[id] != 0) {
                 require(
-                    vesting.lastCollectionTimestamp >= lastCollectionTimestamps[id],
+                    lastCollectionTimestamp >= lastCollectionTimestamps[id],
                     "Invariant violation: lastCollectionTimestamp decreased since last collection"
                 );
             }
@@ -217,7 +217,7 @@ contract BcgVestingHandler is Test {
 
     function checkDaysCollectedInvariant() public view {
         for (uint16 id = startingTokenId; id < startingTokenId + subsetSize; id++) {
-            (uint256 daysCollected, , ) = bcgVesting.vestingState(id);
+            (uint256 daysCollected, , , ) = bcgVesting.vestingState(id);
 
             require(
                 daysCollected <= bcgVesting.VESTING_PERIOD_IN_DAYS(),
@@ -228,12 +228,12 @@ contract BcgVestingHandler is Test {
 
     function checkVestingPeriodValuesInvariant() public view {
         for (uint16 id = startingTokenId; id < startingTokenId + subsetSize; id++) {
-            (, , BcgVesting.VestingPeriod memory vesting) = bcgVesting.vestingState(id);
+            (, , address owner, uint48 lastCollectionTimestamp) = bcgVesting.vestingState(
+                id
+            );
 
-            bool allZero = vesting.owner == address(0) &&
-                vesting.lastCollectionTimestamp == 0;
-            bool allNonZero = vesting.owner != address(0) &&
-                vesting.lastCollectionTimestamp != 0;
+            bool allZero = owner == address(0) && lastCollectionTimestamp == 0;
+            bool allNonZero = owner != address(0) && lastCollectionTimestamp != 0;
             require(
                 allZero != allNonZero,
                 "Invariant violation: VestingPeriod values must be all zero or all non-zero"
@@ -243,13 +243,12 @@ contract BcgVestingHandler is Test {
 
     function checkSingleStakerOwnerInvariant() public view {
         for (uint16 id = startingTokenId; id < startingTokenId + subsetSize; id++) {
-            // Read the vesting data for this token
-            (, , BcgVesting.VestingPeriod memory vesting) = bcgVesting.vestingState(id);
+            (, , address owner, ) = bcgVesting.vestingState(id);
 
             // If the token is staked (owner != address(0)), then check the recorded staker
-            if (vesting.owner != address(0)) {
+            if (owner != address(0)) {
                 require(
-                    vesting.owner == stakerRegistry[id],
+                    owner == stakerRegistry[id],
                     "Invariant violation: staker changed mid-staking!"
                 );
             }
@@ -261,14 +260,15 @@ contract BcgVestingHandler is Test {
             (
                 uint256 daysCollected,
                 bool initialUnlockCollected,
-                BcgVesting.VestingPeriod memory vesting
+                address owner,
+                uint48 lastCollectionTimestamp
             ) = bcgVesting.vestingState(id);
 
             if (!initialUnlockCollected) {
                 // If no initial unlock has been collected, token must never have been staked
                 require(
-                    vesting.owner == address(0) &&
-                        vesting.lastCollectionTimestamp == 0 &&
+                    owner == address(0) &&
+                        lastCollectionTimestamp == 0 &&
                         daysCollected == 0,
                     "Invariant violation: No initial unlock collected, but token shows vesting activity"
                 );
@@ -284,12 +284,13 @@ contract BcgVestingHandler is Test {
         (
             uint256 daysCollected,
             bool initialUnlockCollected,
-            BcgVesting.VestingPeriod memory vesting
+            address owner,
+            uint48 lastCollectionTimestamp
         ) = bcgVesting.vestingState(tokenId);
 
         // If the token has never been staked, these conditions should hold true
         vm.assume(!initialUnlockCollected);
-        vm.assume(vesting.owner == address(0) && vesting.lastCollectionTimestamp == 0);
+        vm.assume(owner == address(0) && lastCollectionTimestamp == 0);
         vm.assume(daysCollected == 0);
 
         uint256 stakerBalanceBefore = beramoToken.balanceOf(staker);
