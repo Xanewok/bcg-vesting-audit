@@ -217,13 +217,13 @@ contract BcgVesting is AccessControl, IBcgTokenStakeListener {
 
         // Truncation: validated to be in range by the modifier
         uint16 tokenId = uint16(tokenId_);
-        TokenVestingState memory data = vestingState[tokenId];
+        TokenVestingState memory state = vestingState[tokenId];
 
-        require(data.owner == address(0), TokenAlreadyStaked(tokenId));
-        require(data.lastCollectionTimestamp == 0, TokenAlreadyStaked(tokenId));
+        require(state.owner == address(0), TokenAlreadyStaked(tokenId));
+        require(state.lastCollectionTimestamp == 0, TokenAlreadyStaked(tokenId));
 
         // Collect the initial unlock immediately, if applicable
-        if (data.initialUnlockCollected == false) {
+        if (state.initialUnlockCollected == false) {
             vestingState[tokenId].initialUnlockCollected = true;
 
             // Safety: The token address is immutable and picked by the creator,
@@ -234,7 +234,7 @@ contract BcgVesting is AccessControl, IBcgTokenStakeListener {
         }
 
         // Nothing to unlock anymore, don't bother writing to storage
-        if (data.daysCollected >= VESTING_PERIOD_IN_DAYS) {
+        if (state.daysCollected >= VESTING_PERIOD_IN_DAYS) {
             return;
         }
 
@@ -258,13 +258,13 @@ contract BcgVesting is AccessControl, IBcgTokenStakeListener {
     ) external onlyRole(STAKER_ROLE) validateBcgTokenId(tokenId_) {
         // Truncation: validated to be in range by the modifier
         uint16 tokenId = uint16(tokenId_);
-        TokenVestingState memory data = vestingState[tokenId];
+        TokenVestingState memory state = vestingState[tokenId];
 
-        require(data.owner == staker_, MismatchedStaker(staker_, data.owner));
-        require(data.lastCollectionTimestamp != 0, TokenNotStaked(tokenId));
+        require(state.owner == staker_, MismatchedStaker(staker_, state.owner));
+        require(state.lastCollectionTimestamp != 0, TokenNotStaked(tokenId));
 
         // Nothing to unlock anymore, don't bother writing to storage
-        if (data.daysCollected >= VESTING_PERIOD_IN_DAYS) {
+        if (state.daysCollected >= VESTING_PERIOD_IN_DAYS) {
             return;
         }
 
@@ -287,12 +287,12 @@ contract BcgVesting is AccessControl, IBcgTokenStakeListener {
     function collectPendingRewards(uint16 tokenId) public validateBcgTokenId(tokenId) {
         require(vestingPoolInitialized, VestingPoolNotInitialized());
 
-        TokenVestingState memory data = vestingState[tokenId];
+        TokenVestingState memory state = vestingState[tokenId];
 
         // Only the owner of the staked token or the staker can collect the rewards
         require(
-            msg.sender == data.owner || hasRole(STAKER_ROLE, msg.sender),
-            UnauthorizedCollector(data.owner, msg.sender)
+            msg.sender == state.owner || hasRole(STAKER_ROLE, msg.sender),
+            UnauthorizedCollector(state.owner, msg.sender)
         );
 
         (uint256 fullDays, uint256 linearRewards) = _pendingLinearRewards(tokenId);
@@ -304,8 +304,8 @@ contract BcgVesting is AccessControl, IBcgTokenStakeListener {
 
             // Safety: The token address is immutable and picked by the creator,
             // so no risk of reentrancy.
-            _beramoToken.safeTransfer(data.owner, linearRewards);
-            emit RewardCollected(data.owner, tokenId, linearRewards);
+            _beramoToken.safeTransfer(state.owner, linearRewards);
+            emit RewardCollected(state.owner, tokenId, linearRewards);
         }
     }
 
@@ -338,15 +338,15 @@ contract BcgVesting is AccessControl, IBcgTokenStakeListener {
     function _pendingLinearRewards(
         uint16 tokenId
     ) internal view returns (uint256 fullDays, uint256 rewards) {
-        TokenVestingState memory data = vestingState[uint16(tokenId)];
+        TokenVestingState memory state = vestingState[uint16(tokenId)];
 
         // Nothing to unlock anymore
-        if (data.daysCollected >= VESTING_PERIOD_IN_DAYS) {
+        if (state.daysCollected >= VESTING_PERIOD_IN_DAYS) {
             return (0, 0);
         }
 
         // Not staking, so no rewards to collect
-        if (data.lastCollectionTimestamp == 0) {
+        if (state.lastCollectionTimestamp == 0) {
             return (0, 0);
         }
 
@@ -357,11 +357,11 @@ contract BcgVesting is AccessControl, IBcgTokenStakeListener {
         // Truncation: 48-bit timestamp is million years away
         uint48 _now = uint48(block.timestamp);
 
-        fullDays = _fullDaysElapsed(data.lastCollectionTimestamp, _now);
+        fullDays = _fullDaysElapsed(state.lastCollectionTimestamp, _now);
         if (fullDays > 0) {
             // Ensure we never go beyond the vesting period (364 days)
-            fullDays = (data.daysCollected + fullDays) > VESTING_PERIOD_IN_DAYS
-                ? VESTING_PERIOD_IN_DAYS - data.daysCollected
+            fullDays = (state.daysCollected + fullDays) > VESTING_PERIOD_IN_DAYS
+                ? VESTING_PERIOD_IN_DAYS - state.daysCollected
                 : fullDays;
 
             rewards = fullDays * BASE_BERA_DAILY_UNLOCK * _allocationMultiplier(tokenId);
