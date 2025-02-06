@@ -19,8 +19,6 @@ contract BeramoniumGemhuntersListeners is
     UUPSUpgradeable,
     IERC721ReceiverUpgradeable
 {
-    bytes32 public constant UPGRADER_ROLE = keccak256("UPGRADER_ROLE");
-
     // NOTE: This is an upgradeable contract, so don't reorganize the storage
     // nor change the types of the variables. Only append new variables at the end.
     IERC721A public _beramonium;
@@ -50,12 +48,12 @@ contract BeramoniumGemhuntersListeners is
         __AccessControl_init();
         __UUPSUpgradeable_init();
 
-        _grantRole(UPGRADER_ROLE, msg.sender);
+        _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
     }
 
     function _authorizeUpgrade(
         address newImplementation
-    ) internal override onlyRole(UPGRADER_ROLE) {}
+    ) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
 
     /**
      * @notice Returns the number of staked beras for the given owner.
@@ -158,12 +156,14 @@ contract BeramoniumGemhuntersListeners is
     }
 
     /** Adds a listener contract to the list of (un)staking listeners */
-    function pushListener(Listener calldata listener) public onlyRole(UPGRADER_ROLE) {
+    function pushListener(
+        Listener calldata listener
+    ) public onlyRole(DEFAULT_ADMIN_ROLE) {
         listeners.push(listener);
     }
 
     /** Removes a listener contract from the list of (un)staking listeners */
-    function popListener(Listener calldata listener) public onlyRole(UPGRADER_ROLE) {
+    function popListener(Listener calldata listener) public onlyRole(DEFAULT_ADMIN_ROLE) {
         unchecked {
             for (uint i = 0; i < listeners.length; i++) {
                 if (listeners[i].addr == listener.addr) {
