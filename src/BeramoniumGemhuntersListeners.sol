@@ -6,6 +6,7 @@ import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Ini
 import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {IERC721ReceiverUpgradeable} from "@openzeppelin/contracts-upgradeable/token/ERC721/IERC721ReceiverUpgradeable.sol";
+import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 import {IERC721A} from "erc721a/contracts/IERC721A.sol";
 
 import {Uint13Array19} from "./Uint13Array19.sol";
@@ -17,7 +18,8 @@ contract BeramoniumGemhuntersListeners is
     Initializable,
     AccessControlUpgradeable,
     UUPSUpgradeable,
-    IERC721ReceiverUpgradeable
+    IERC721ReceiverUpgradeable,
+    ReentrancyGuardTransient
 {
     // NOTE: This is an upgradeable contract, so don't reorganize the storage
     // nor change the types of the variables. Only append new variables at the end.
@@ -76,7 +78,7 @@ contract BeramoniumGemhuntersListeners is
     /**
      * @notice Stakes the given Bera IDs for the sender.
      */
-    function stake(uint16[] calldata tokenIds) public {
+    function stake(uint16[] calldata tokenIds) public nonReentrant {
         if (tokenIds.length == 0) return;
         if (tokenIds.length > 6000) revert IndexOutOfBounds();
 
@@ -110,7 +112,7 @@ contract BeramoniumGemhuntersListeners is
      * @notice Unstake the given beras for the sender.
      * @param indices List indices of the beras to unstake. The indices must be in descending order.
      */
-    function unstakeByIndices(uint16[] calldata indices) public {
+    function unstakeByIndices(uint16[] calldata indices) public nonReentrant {
         if (indices.length == 0) return;
 
         uint16 stakeCount = stakedBeraCount(msg.sender);
