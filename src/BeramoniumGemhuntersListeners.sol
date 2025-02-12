@@ -23,9 +23,9 @@ contract BeramoniumGemhuntersListeners is
 {
     // NOTE: This is an upgradeable contract, so don't reorganize the storage
     // nor change the types of the variables. Only append new variables at the end.
-    IERC721A public _beramonium;
+    IERC721A public beramonium;
 
-    Uint13List.Storage _flexStakedList;
+    Uint13List.Storage private _flexStakedList;
 
     struct Listener {
         /** The address of the listener contract */
@@ -38,15 +38,17 @@ contract BeramoniumGemhuntersListeners is
         bool allowFail;
     }
 
-    Listener[] private listeners;
+    Listener[] public listeners;
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
         _disableInitializers();
     }
 
-    function initialize(IERC721A beramonium) public initializer {
-        _beramonium = beramonium;
+    function initialize(IERC721A beramonium_) public initializer {
+        require(address(beramonium_) != address(0), InvalidAddress());
+
+        beramonium = beramonium_;
         __AccessControl_init();
         __UUPSUpgradeable_init();
 
@@ -85,7 +87,7 @@ contract BeramoniumGemhuntersListeners is
         // Make sure that the caller owns the beras before trying to transfer them
         unchecked {
             for (uint i = 0; i < tokenIds.length; i++) {
-                if (_beramonium.ownerOf(tokenIds[i]) != msg.sender) revert NotOwner();
+                if (beramonium.ownerOf(tokenIds[i]) != msg.sender) revert NotOwner();
             }
         }
 
@@ -101,7 +103,7 @@ contract BeramoniumGemhuntersListeners is
                 // We prefix the array with length (taking 1 slot), so we need to add 1;
                 _flexStakedList.setAt(msg.sender, i + stakeCount + 1, tokenId);
 
-                _beramonium.safeTransferFrom(msg.sender, address(this), tokenId);
+                beramonium.safeTransferFrom(msg.sender, address(this), tokenId);
                 emit Staked(msg.sender, tokenId);
                 notifyStaked(msg.sender, tokenId);
             }
@@ -147,7 +149,7 @@ contract BeramoniumGemhuntersListeners is
 
                 stakeCount--;
 
-                _beramonium.safeTransferFrom(address(this), msg.sender, removedId);
+                beramonium.safeTransferFrom(address(this), msg.sender, removedId);
                 emit Unstaked(msg.sender, removedId);
                 notifyUnstaked(msg.sender, removedId);
             }
@@ -161,7 +163,11 @@ contract BeramoniumGemhuntersListeners is
     function pushListener(
         Listener calldata listener
     ) public onlyRole(DEFAULT_ADMIN_ROLE) {
+        require(listener.addr != address(0), InvalidAddress());
+
         listeners.push(listener);
+
+        emit ListenerAdded(listener.addr);
     }
 
     /** Removes a listener contract from the list of (un)staking listeners */
@@ -175,6 +181,8 @@ contract BeramoniumGemhuntersListeners is
                 }
             }
         }
+
+        emit ListenerRemoved(listener.addr);
     }
 
     /** Notifies other contracts about staked/unstaked tokens */
@@ -207,7 +215,10 @@ contract BeramoniumGemhuntersListeners is
 
     event Staked(address owner, uint16 tokenId);
     event Unstaked(address owner, uint16 tokenId);
+    event ListenerAdded(address indexed listener);
+    event ListenerRemoved(address indexed listener);
 
+    error InvalidAddress();
     error IndicesUnordered();
     error IndexOutOfBounds();
     error NotOwner();
