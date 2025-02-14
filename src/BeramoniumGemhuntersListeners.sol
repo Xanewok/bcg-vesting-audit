@@ -131,10 +131,12 @@ contract BeramoniumGemhuntersListeners is
                 if (indices[i - 1] <= indices[i]) revert IndicesUnordered();
             }
 
-            // Perform swap-remove for each index and delete the storage slots if needed
+            uint16[] memory removedIds = new uint16[](indices.length);
+
+            // Process removals via swap-remove
             for (i = 0; i < indices.length; i++) {
                 // We prefix the array with length (taking 1 slot), so we need to add 1.
-                uint16 removedId = _flexStakedList.getAt(msg.sender, indices[i] + 1);
+                removedIds[i] = _flexStakedList.getAt(msg.sender, indices[i] + 1);
                 uint16 last = _flexStakedList.getAt(msg.sender, stakeCount);
                 // Swap-remove with the last element
                 _flexStakedList.setAt(msg.sender, indices[i] + 1, last);
@@ -148,14 +150,18 @@ contract BeramoniumGemhuntersListeners is
                 }
 
                 stakeCount--;
+            }
+            // Commit the final stake count
+            _flexStakedList.setAt(msg.sender, 0, stakeCount);
+
+            // Follow up with external calls
+            for (i = 0; i < removedIds.length; i++) {
+                uint16 removedId = removedIds[i];
 
                 beramonium.safeTransferFrom(address(this), msg.sender, removedId);
                 emit Unstaked(msg.sender, removedId);
                 notifyUnstaked(msg.sender, removedId);
             }
-
-            // Commit the final stake count
-            _flexStakedList.setAt(msg.sender, 0, stakeCount);
         }
     }
 
